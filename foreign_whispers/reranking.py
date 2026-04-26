@@ -7,8 +7,88 @@ SegmentMetrics.  The translation re-ranking function is a **student assignment**
 
 import dataclasses
 import logging
+import re
 
 logger = logging.getLogger(__name__)
+
+_CHARS_PER_SECOND = 15.0
+
+# Common verbose Spanish phrases → shorter equivalents
+_PHRASE_REPLACEMENTS: list[tuple[str, str]] = [
+    (r"\ben este momento\b", "ahora"),
+    (r"\ben este instante\b", "ahora"),
+    (r"\bactualmente\b", "hoy"),
+    (r"\ba pesar de ello\b", "aun así"),
+    (r"\bsin embargo\b", "pero"),
+    (r"\bno obstante\b", "pero"),
+    (r"\bpor lo tanto\b", "entonces"),
+    (r"\bpor consiguiente\b", "así"),
+    (r"\bcon el fin de\b", "para"),
+    (r"\ba fin de\b", "para"),
+    (r"\bes decir\b", "o sea"),
+    (r"\bde todas formas\b", "igual"),
+    (r"\bde todas maneras\b", "igual"),
+    (r"\bpor supuesto\b", "claro"),
+    (r"\bdesde luego\b", "claro"),
+    (r"\bpor otra parte\b", "además"),
+    (r"\bpor otro lado\b", "además"),
+    (r"\ben realidad\b", "en verdad"),
+    (r"\bmucho más\b", "más"),
+    (r"\bmucho menos\b", "menos"),
+    (r"\bverdaderamente\b", "muy"),
+    (r"\bcompletamente\b", "del todo"),
+    (r"\btotalmente\b", "del todo"),
+    (r"\bsimplemente\b", "solo"),
+    (r"\bsolamente\b", "solo"),
+    (r"\bunicamente\b", "solo"),
+    (r"\bgeneralmente\b", "en general"),
+    (r"\bnormalmente\b", "usualmente"),
+    (r"\bhabitualmente\b", "siempre"),
+    (r"\bfinalmente\b", "al fin"),
+    (r"\bpor último\b", "al fin"),
+    (r"\bes importante\b", "importa"),
+    (r"\blo que es\b", "lo"),
+    (r"\bque es\b", "que"),
+]
+
+# Filler/hedge words safe to drop
+_FILLERS = [
+    r"\bbueno\b,?\s*",
+    r"\bpues\b,?\s*",
+    r"\bverdad\b,?\s*",
+    r"\bclaro\b,?\s*",
+    r"\beh\b,?\s*",
+    r"\bum\b,?\s*",
+    r"\bah\b,?\s*",
+    r"\bde hecho\b,?\s*",
+    r"\ben fin\b,?\s*",
+]
+
+
+def _apply_phrase_substitutions(text: str) -> str:
+    for pattern, replacement in _PHRASE_REPLACEMENTS:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
+
+
+def _strip_fillers(text: str) -> str:
+    for pattern in _FILLERS:
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+    return re.sub(r"\s{2,}", " ", text).strip()
+
+
+def _truncate_to_budget(text: str, budget_chars: int) -> str:
+    if len(text) <= budget_chars:
+        return text
+    words = text.split()
+    result = []
+    length = 0
+    for word in words:
+        if length + len(word) + (1 if result else 0) > budget_chars:
+            break
+        result.append(word)
+        length += len(word) + (1 if len(result) > 1 else 0)
+    return " ".join(result)
 
 
 @dataclasses.dataclass
@@ -157,10 +237,43 @@ def get_shorter_translations(
     Returns:
         Empty list (stub).  Implement to return ``TranslationCandidate`` items.
     """
-    logger.info(
-        "get_shorter_translations called for %.1fs budget (%d chars baseline) — "
-        "returning empty list (student assignment stub).",
-        target_duration_s,
-        len(baseline_es),
-    )
-    return []
+    budget_chars = int(target_duration_s * _CHARS_PER_SECOND)
+    candidates: list[TranslationCandidate] = []
+
+    # Level 1: phrase substitution
+    substituted = _apply_phrase_substitutions(baseline_es).strip()
+    if substituted != baseline_es:
+        candidates.append(TranslationCandidate(
+            text=substituted,
+            char_count=len(substituted),
+            brevity_rationale="replaced verbose phrases with shorter equivalents",
+        ))
+
+    # Level 2: filler removal (applied on top of substitutions)
+    defilled = _strip_fillers(substituted)
+    if defilled != substituted and defilled:
+        candidates.append(TranslationCandidate(
+            text=defilled,
+            char_count=len(defilled),
+            brevity_rationale="removed filler words",
+        ))
+
+    # Level 3: hard truncation to fit budget
+    best_so_far = defilled if defilled else substituted if substituted != baseline_es else baseline_es
+    truncated = _truncate_to_budget(best_so_far, budget_chars)
+    if truncated != best_so_far and truncated:
+        candidates.append(TranslationCandidate(
+            text=truncated,
+            char_count=len(truncated),
+            brevity_rationale=f"truncated to fit {budget_chars}-char budget ({target_duration_s:.1f}s)",
+        ))
+
+    # Always include the baseline if nothing else fits better or as a fallback
+    if not candidates:
+        candidates.append(TranslationCandidate(
+            text=baseline_es,
+            char_count=len(baseline_es),
+            brevity_rationale="no shortening possible; returning baseline",
+        ))
+
+    return sorted(candidates, key=lambda c: c.char_count)

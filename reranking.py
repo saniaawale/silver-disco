@@ -105,174 +105,27 @@ def get_shorter_translations(
 ) -> list[TranslationCandidate]:
     """Return shorter translation candidates that fit *target_duration_s*.
 
-    Strategy: rule-based phrase contraction followed by word-boundary truncation
-    as a hard fallback. Candidates are deduplicated and sorted shortest first.
-
-    The duration heuristic is 15 chars/second for Spanish TTS.
+    Strategy: word-boundary truncation to fit within the 15 chars/second budget.
     """
     char_budget = int(target_duration_s * _CHARS_PER_SECOND)
 
     if len(baseline_es) <= char_budget:
         return []
 
-    candidates: list[TranslationCandidate] = []
-    seen: set[str] = set()
-
-    def _add(text: str, rationale: str) -> None:
-        text = text.strip()
-        if text and text not in seen:
-            seen.add(text)
-            candidates.append(TranslationCandidate(
-                text=text,
-                char_count=len(text),
-                brevity_rationale=rationale,
-            ))
-
-    # Pass 1: apply multi-word phrase substitutions in order (longest first so
-    # more specific patterns match before their sub-strings do).
-    contracted = baseline_es
-    applied: list[str] = []
-    for phrase, replacement in _PHRASE_CONTRACTIONS:
-        import re as _re
-        pattern = _re.compile(r'\b' + _re.escape(phrase) + r'\b', _re.IGNORECASE)
-        new = pattern.sub(replacement, contracted)
-        if new != contracted:
-            applied.append(f'"{phrase}"→"{replacement}"')
-            contracted = new
-
-    if contracted != baseline_es:
-        _add(contracted, "phrase contractions: " + ", ".join(applied))
-
-    # Pass 2: strip standalone filler words from the contracted text.
-    import re as _re
-    stripped = contracted
-    filler_removed: list[str] = []
-    for filler in _FILLER_WORDS:
-        pattern = _re.compile(
-            r'(?<![^\s,;])' + _re.escape(filler) + r'(?![^\s,;.])',
-            _re.IGNORECASE,
-        )
-        new = pattern.sub("", stripped).strip(" ,;")
-        # collapse multiple spaces
-        new = _re.sub(r' {2,}', ' ', new)
-        if new != stripped:
-            filler_removed.append(filler)
-            stripped = new
-
-    if stripped != contracted:
-        _add(stripped, "filler removal: " + ", ".join(filler_removed))
-
-    # Pass 3: word-boundary truncation of the best candidate so far, or the
-    # baseline if no contraction helped.  Produces one candidate that fits
-    # exactly within the budget by cutting at the last word boundary.
-    best_so_far = stripped if stripped != baseline_es else baseline_es
-    if len(best_so_far) > char_budget:
-        truncated = _truncate_at_word_boundary(best_so_far, char_budget)
-        if truncated:
-            _add(truncated, f"truncated to {char_budget}-char budget")
-
-    candidates.sort(key=lambda c: c.char_count)
-    logger.info(
-        "get_shorter_translations: budget=%d chars (%.1fs), baseline=%d chars, "
-        "produced %d candidate(s).",
-        char_budget,
-        target_duration_s,
-        len(baseline_es),
-        len(candidates),
-    )
-    return candidates
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
-
-_CHARS_PER_SECOND = 15  # empirical TTS rate for Spanish
-
-# Multi-word phrase → shorter equivalent, ordered longest-match first.
-_PHRASE_CONTRACTIONS: list[tuple[str, str]] = [
-    ("en este momento", "ahora"),
-    ("en este instante", "ahora"),
-    ("en estos momentos", "ahora"),
-    ("en el momento actual", "actualmente"),
-    ("a pesar de todo", "con todo"),
-    ("a pesar de ello", "pero"),
-    ("a pesar de esto", "pero"),
-    ("debido a que", "porque"),
-    ("debido a ello", "por eso"),
-    ("debido a esto", "por esto"),
-    ("a causa de", "por"),
-    ("con el fin de", "para"),
-    ("con el objetivo de", "para"),
-    ("con la finalidad de", "para"),
-    ("con el propósito de", "para"),
-    ("por medio de", "mediante"),
-    ("por parte de", "por"),
-    ("por supuesto que", "claro,"),
-    ("por supuesto", "claro"),
-    ("por lo tanto", "así"),
-    ("por lo que", "entonces"),
-    ("por lo menos", "al menos"),
-    ("sin embargo", "pero"),
-    ("no obstante", "pero"),
-    ("a continuación", "luego"),
-    ("en primer lugar", "primero"),
-    ("en segundo lugar", "segundo"),
-    ("en último lugar", "por último"),
-    ("a continuación", "luego"),
-    ("en realidad", "realmente"),
-    ("de hecho", "incluso"),
-    ("de todas formas", "igual"),
-    ("de todas maneras", "igual"),
-    ("de todos modos", "igual"),
-    ("hay que", "se debe"),
-    ("lo que significa", "o sea"),
-    ("lo cual significa", "es decir"),
-    ("es decir", "o sea"),
-    ("es necesario que", "hay que"),
-    ("es importante que", "hay que"),
-    ("es posible que", "quizás"),
-    ("es probable que", "probablemente"),
-    ("quiero decir", "o sea"),
-    ("me refiero a", "o sea"),
-    ("se trata de", "es"),
-    ("se puede decir", "podría decirse"),
-    ("se podría decir", "podría decirse"),
-    ("todo el mundo", "todos"),
-    ("mucha gente", "muchos"),
-    ("gran cantidad de", "muchos"),
-    ("un gran número de", "muchos"),
-    ("actualmente", "hoy"),
-    ("anteriormente", "antes"),
-    ("posteriormente", "después"),
-    ("finalmente", "al fin"),
-]
-
-# Standalone filler words/phrases that add length without content.
-_FILLER_WORDS: list[str] = [
-    "pues",
-    "bueno",
-    "entonces",
-    "básicamente",
-    "literalmente",
-    "evidentemente",
-    "obviamente",
-    "simplemente",
-    "claramente",
-    "definitivamente",
-    "absolutamente",
-    "totalmente",
-    "completamente",
-    "realmente",
-]
-
-
-def _truncate_at_word_boundary(text: str, max_chars: int) -> str:
-    """Return *text* cut at the last whitespace that fits within *max_chars*."""
-    if len(text) <= max_chars:
-        return text
-    cut = text[:max_chars]
+    cut = baseline_es[:char_budget]
     last_space = cut.rfind(" ")
     if last_space > 0:
         cut = cut[:last_space]
-    return cut.rstrip(" ,;:")
+    cut = cut.rstrip(" ,;:")
+
+    if not cut:
+        return []
+
+    logger.info(
+        "get_shorter_translations: budget=%d chars (%.1fs), baseline=%d chars, truncated to %d.",
+        char_budget, target_duration_s, len(baseline_es), len(cut),
+    )
+    return [TranslationCandidate(text=cut, char_count=len(cut), brevity_rationale="truncated to fit budget")]
+
+
+_CHARS_PER_SECOND = 15  # empirical TTS rate for Spanish

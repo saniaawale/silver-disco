@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_URL="https://github.com/aegean-ai/foreign-whispers.git"
 REPO_DIR="$(dirname "$0")/../foreign-whispers"
 
-# ── 1. Clone the repo if not already present ─────────────────────────────────
+# ── 1. Clone the repo if not already present ───────────────────────────────
 if [ ! -d "$REPO_DIR" ]; then
     echo "Cloning foreign-whispers..."
     git clone "$REPO_URL" "$REPO_DIR"
@@ -14,7 +14,7 @@ fi
 
 cd "$REPO_DIR"
 
-# ── 2. Create .env if missing ─────────────────────────────────────────────────
+# ── 2. Create .env if missing ─────────────────────────────────────────────
 if [ ! -f ".env" ]; then
     cp "$(dirname "$0")/.env.example" .env
     echo ""
@@ -24,7 +24,7 @@ if [ ! -f ".env" ]; then
 fi
 
 # ── 3. Create cookies.txt if missing (required by docker-compose volume mount) ─
-if [ ! -f "cookies.txt" ]; then
+ if [ ! -f "cookies.txt" ]; then
     touch cookies.txt
     echo "Created empty cookies.txt"
 fi
@@ -41,7 +41,7 @@ else
     echo ""
 fi
 
-# ── 5. Build and start the stack ─────────────────────────────────────────────
+# ── 5. Build and start the stack ───────────────────────────────────────────
 echo "Starting Docker stack (profile: $PROFILE)..."
 docker compose --profile "$PROFILE" up -d --build
 

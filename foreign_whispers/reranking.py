@@ -103,64 +103,118 @@ def get_shorter_translations(
     context_prev: str = "",
     context_next: str = "",
 ) -> list[TranslationCandidate]:
-    """Return shorter translation candidates that fit *target_duration_s*.
+    char_budget = int(target_duration_s * 15)
+    candidates: list[TranslationCandidate] = []
 
-    .. admonition:: Student Assignment — Duration-Aware Translation Re-ranking
+    # 1. Rule-based: contract common long Spanish phrases
+    _CONTRACTIONS = [
+        ("en este momento", "ahora"),
+        ("en este instante", "ahora"),
+        ("a pesar de eso", "aun así"),
+        ("a pesar de ello", "aun así"),
+        ("sin embargo", "pero"),
+        ("no obstante", "pero"),
+        ("de todas formas", "igual"),
+        ("de todas maneras", "igual"),
+        ("con el fin de", "para"),
+        ("con el objetivo de", "para"),
+        ("debido a que", "porque"),
+        ("a causa de que", "porque"),
+        ("en el caso de que", "si"),
+        ("en lo que respecta a", "sobre"),
+        ("en lo que se refiere a", "sobre"),
+        ("es decir", "o sea"),
+        ("por supuesto", "claro"),
+        ("por lo tanto", "entonces"),
+        ("por consiguiente", "así que"),
+        ("al mismo tiempo", "a la vez"),
+        ("en primer lugar", "primero"),
+        ("en segundo lugar", "segundo"),
+        ("en última instancia", "finalmente"),
+        ("de hecho", ""),
+        ("básicamente", ""),
+        ("prácticamente", "casi"),
+        ("absolutamente", "muy"),
+        ("verdaderamente", "muy"),
+        ("completamente", "muy"),
+        ("totalmente", "muy"),
+        ("realmente", "muy"),
+    ]
 
-       This function is intentionally a **stub that returns an empty list**.
-       Your task is to implement a strategy that produces shorter
-       target-language translations when the baseline translation is too long
-       for the time budget.
+    rule_text = baseline_es
+    applied = []
+    for long_form, short_form in _CONTRACTIONS:
+        if long_form in rule_text.lower():
+            rule_text = re.sub(re.escape(long_form), short_form, rule_text, flags=re.IGNORECASE).strip()
+            rule_text = re.sub(r"  +", " ", rule_text)
+            applied.append(long_form)
 
-       **Inputs**
+    if rule_text != baseline_es and len(rule_text) <= len(baseline_es):
+        candidates.append(TranslationCandidate(
+            text=rule_text,
+            char_count=len(rule_text),
+            brevity_rationale=f"contracted: {', '.join(applied[:2])}",
+        ))
 
-       ============== ======== ==================================================
-       Parameter      Type     Description
-       ============== ======== ==================================================
-       source_text    str      Original source-language segment text
-       baseline_es    str      Baseline target-language translation (from argostranslate)
-       target_duration_s float Time budget in seconds for this segment
-       context_prev   str      Text of the preceding segment (for coherence)
-       context_next   str      Text of the following segment (for coherence)
-       ============== ======== ==================================================
+    # 2. Clause truncation: cut at first comma/semicolon/dash
+    clause_match = re.search(r"[,;—–]\s*", baseline_es)
+    if clause_match:
+        truncated = baseline_es[: clause_match.start()].strip().rstrip(".,;")
+        if truncated and len(truncated) < len(baseline_es):
+            candidates.append(TranslationCandidate(
+                text=truncated,
+                char_count=len(truncated),
+                brevity_rationale="truncated at clause boundary",
+            ))
 
-       **Outputs**
+    # 3. Argostranslate re-translation on condensed English
+    try:
+        import argostranslate.translate as _at
+        _EN_FILLERS = (
+            r"\b(basically|essentially|actually|really|literally|absolutely|"
+            r"definitely|certainly|obviously|clearly|simply|just|very|quite|"
+            r"rather|somewhat|pretty|fairly|of course|you know|i mean)\b"
+        )
+        short_en = re.sub(_EN_FILLERS, "", source_text, flags=re.IGNORECASE)
+        short_en = re.sub(r"  +", " ", short_en).strip()
+        if short_en and short_en != source_text:
+            retranslated = _at.translate(short_en, "en", "es")
+            if retranslated and retranslated != baseline_es:
+                candidates.append(TranslationCandidate(
+                    text=retranslated,
+                    char_count=len(retranslated),
+                    brevity_rationale="re-translated from condensed English",
+                ))
+    except Exception as exc:
+        logger.debug("argostranslate re-translation skipped: %s", exc)
 
-       A list of ``TranslationCandidate`` objects, sorted shortest first.
-       Each candidate has:
+    # 4. Hard truncation fallback: cut to char budget at word boundary
+    if not candidates or all(c.char_count >= len(baseline_es) for c in candidates):
+        words = baseline_es.split()
+        hard = ""
+        for word in words:
+            candidate_str = (hard + " " + word).strip()
+            if len(candidate_str) > char_budget:
+                break
+            hard = candidate_str
+        if hard and hard != baseline_es:
+            candidates.append(TranslationCandidate(
+                text=hard,
+                char_count=len(hard),
+                brevity_rationale="truncated to character budget",
+            ))
 
-       - ``text``: the shortened target-language translation
-       - ``char_count``: ``len(text)``
-       - ``brevity_rationale``: short note on what was changed
+    # Deduplicate and sort by closeness to char_budget
+    seen: set[str] = set()
+    unique = []
+    for c in candidates:
+        if c.text not in seen and c.text != baseline_es:
+            seen.add(c.text)
+            unique.append(c)
 
-       **Duration heuristic**: target-language TTS produces ~15 characters/second
-       (or ~4.5 syllables/second for Romance languages).  So a 3-second budget
-       ≈ 45 characters.
-
-       **Approaches to consider** (pick one or combine):
-
-       1. **Rule-based shortening** — strip filler words, use shorter synonyms
-          from a lookup table, contract common phrases
-          (e.g. "en este momento" → "ahora").
-       2. **Multiple translation backends** — call argostranslate with
-          paraphrased input, or use a second translation model, then pick
-          the shortest output that preserves meaning.
-       3. **LLM re-ranking** — use an LLM (e.g. via an API) to generate
-          condensed alternatives.  This was the previous approach but adds
-          latency, cost, and a runtime dependency.
-       4. **Hybrid** — rule-based first, fall back to LLM only for segments
-          that still exceed the budget.
-
-       **Evaluation criteria**: the caller selects the candidate whose
-       ``len(text) / 15.0`` is closest to ``target_duration_s``.
-
-    Returns:
-        Empty list (stub).  Implement to return ``TranslationCandidate`` items.
-    """
     logger.info(
-        "get_shorter_translations called for %.1fs budget (%d chars baseline) — "
-        "returning empty list (student assignment stub).",
-        target_duration_s,
-        len(baseline_es),
+        "get_shorter_translations: %d candidates for %.1fs budget (%d chars baseline)",
+        len(unique), target_duration_s, len(baseline_es),
     )
-    return []
+    unique.sort(key=lambda c: abs(c.char_count - char_budget))
+    return unique

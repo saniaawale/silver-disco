@@ -30,6 +30,7 @@ def _count_syllables(text: str) -> int:
     while collapsing Spanish diphthongs (two-vowel pairs spoken as one syllable).
     Returns at least 1 for any non-empty text so the rate never divides by zero.
     """
+    # Normalise: decompose accented chars, keep only ASCII letters + spaces
     nfkd = unicodedata.normalize("NFKD", text.lower())
     ascii_text = "".join(c for c in nfkd if not unicodedata.combining(c))
     ascii_text = re.sub(r"(?<=[aeiou])h(?=[aeiou])", "", ascii_text)

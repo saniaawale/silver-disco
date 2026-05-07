@@ -59,15 +59,6 @@ def dubbing_scorecard(
     aligned: list[AlignedSegment],
     align_report: Optional[dict] = None,
 ) -> dict:
-    """Multi-dimensional dubbing quality scorecard. All scores in [0, 1], higher is better.
-
-    Dimensions:
-        timing_score: How well TTS durations fit source windows (1 = perfect fit).
-        budget_compliance: Fraction of segments that ACCEPT or MILD_STRETCH.
-        stretch_quality: Penalises severe time-stretching (>1.4x).
-        naturalness: Speaking rate consistency across segments (low variance = natural).
-        drift_score: Penalises cumulative timeline drift from gap-shifts.
-    """
     if not metrics:
         return {k: 0.0 for k in
                 ("timing_score", "budget_compliance", "stretch_quality", "naturalness", "drift_score")}

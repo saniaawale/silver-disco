@@ -12,17 +12,15 @@ from youtube_transcript_api import YouTubeTranscriptApi
 _COOKIES_FILE = os.getenv("YT_COOKIES_FILE", "/app/cookies.txt")
 
 def _yt_dlp_opts(**extra):
-    """Base yt-dlp options. Uses iOS player client to bypass YouTube's JS n-challenge."""
+    """Base yt-dlp options. Uses remote EJS solver for YouTube JS n-challenge."""
     opts = {
         "quiet": True,
         "no_warnings": True,
-        "extractor_args": {"youtube": {"player_client": ["ios"]}},
+        "remote_components": ["ejs:github"],
     }
     if pathlib.Path(_COOKIES_FILE).exists():
-        # Copy to a temp file so yt-dlp can write back without touching the mounted source
         tmp = pathlib.Path("/tmp/yt_cookies.txt")
-        import shutil as _shutil
-        _shutil.copy2(_COOKIES_FILE, tmp)
+        shutil.copy2(_COOKIES_FILE, tmp)
         opts["cookiefile"] = str(tmp)
     opts.update(extra)
     return opts
@@ -65,7 +63,7 @@ def download_video(url, destination_folder, filename=None):
         return str(save_path)
     print(f"Downloading: {title}...", end=" ", flush=True)
     ydl_opts = _yt_dlp_opts(
-        format="bestvideo+bestaudio/best",
+        format="bestvideo[ext=mp4]+bestaudio[ext=m4a]/18/best",
         merge_output_format="mp4",
         outtmpl=str(pathlib.Path(destination_folder) / (safe_title + ".%(ext)s")),
     )

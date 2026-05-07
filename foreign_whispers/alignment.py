@@ -26,8 +26,7 @@ def _count_syllables(text: str) -> int:
     """Count syllables in target-language text via vowel-cluster counting.
 
     Designed for Romance languages (Spanish, French, Italian, Portuguese).
-    Strips accents, removes silent inter-vowel 'h', then counts vowel clusters
-    while collapsing Spanish diphthongs (two-vowel pairs spoken as one syllable).
+    Strips accents then counts contiguous vowel runs. Each run = one syllable.
     Returns at least 1 for any non-empty text so the rate never divides by zero.
     """
     # Normalise: decompose accented chars, keep only ASCII letters + spaces
@@ -55,7 +54,7 @@ _PAUSE_S = {".": 0.20, "!": 0.20, "?": 0.20, ";": 0.15,
 
 
 def _estimate_duration(text: str) -> float:
-    """Estimate TTS duration in seconds using syllable rate + punctuation pauses."""
+    """Estimate TTS duration in seconds using a syllable-rate heuristic."""
     return _count_syllables(text) / _SYLLABLE_RATE + sum(_PAUSE_S.get(ch, 0.0) for ch in text)
 
 

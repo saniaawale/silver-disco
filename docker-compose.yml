@@ -73,6 +73,7 @@ services:
       - ./pipeline_data:/app/pipeline_data
       - ./foreign_whispers:/app/foreign_whispers
       - ./api:/app/api
+      - ./cookies.txt:/app/cookies.txt:ro
 
   # ── Frontend (Next.js) — all profiles ──────────────────────────────
   frontend:

@@ -97,5 +97,5 @@ YouTube URL → yt-dlp download → Whisper STT → argostranslate → Chatterbo
 
 ## Open Issues
 
-- `fw-tov`: TTS temporal alignment implementation (design doc: `docs/superpowers/specs/2026-03-17-tts-temporal-alignment-design.md`)
+- `fw-tov`: TTS temporal alignment implementation (research doc: `docs/tts-temporal-alignment-research.md`)
 - `jhg`: Hugging Face Spaces deployment

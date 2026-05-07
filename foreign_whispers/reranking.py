@@ -7,19 +7,13 @@ SegmentMetrics.  The translation re-ranking function is a **student assignment**
 
 import dataclasses
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass
 class TranslationCandidate:
-    """A candidate translation that fits a duration budget.
-
-    Attributes:
-        text: The translated text.
-        char_count: Number of characters in *text*.
-        brevity_rationale: Short explanation of what was shortened.
-    """
     text: str
     char_count: int
     brevity_rationale: str = ""
@@ -27,37 +21,15 @@ class TranslationCandidate:
 
 @dataclasses.dataclass
 class FailureAnalysis:
-    """Diagnostic summary of the dominant failure mode in a clip.
-
-    Attributes:
-        failure_category: One of "duration_overflow", "cumulative_drift",
-            "stretch_quality", or "ok".
-        likely_root_cause: One-sentence description.
-        suggested_change: Most impactful next action.
-    """
     failure_category: str
     likely_root_cause: str
     suggested_change: str
 
 
 def analyze_failures(report: dict) -> FailureAnalysis:
-    """Classify the dominant failure mode from a clip evaluation report.
-
-    Pure heuristic — no LLM needed.  The thresholds below match the policy
-    bands defined in ``alignment.decide_action``.
-
-    Args:
-        report: Dict returned by ``clip_evaluation_report()``.  Expected keys:
-            ``mean_abs_duration_error_s``, ``pct_severe_stretch``,
-            ``total_cumulative_drift_s``, ``n_translation_retries``.
-
-    Returns:
-        A ``FailureAnalysis`` dataclass.
-    """
     mean_err = report.get("mean_abs_duration_error_s", 0.0)
     pct_severe = report.get("pct_severe_stretch", 0.0)
     drift = abs(report.get("total_cumulative_drift_s", 0.0))
-    retries = report.get("n_translation_retries", 0)
 
     if pct_severe > 20:
         return FailureAnalysis(
@@ -68,7 +40,6 @@ def analyze_failures(report: dict) -> FailureAnalysis:
             ),
             suggested_change="Implement duration-aware translation re-ranking (P8).",
         )
-
     if drift > 3.0:
         return FailureAnalysis(
             failure_category="cumulative_drift",
@@ -78,7 +49,6 @@ def analyze_failures(report: dict) -> FailureAnalysis:
             ),
             suggested_change="Enable gap_shift in the global alignment optimizer (P9).",
         )
-
     if mean_err > 0.8:
         return FailureAnalysis(
             failure_category="stretch_quality",
@@ -88,7 +58,6 @@ def analyze_failures(report: dict) -> FailureAnalysis:
             ),
             suggested_change="Lower the mild_stretch ceiling or shorten translations.",
         )
-
     return FailureAnalysis(
         failure_category="ok",
         likely_root_cause="No dominant failure mode detected.",
@@ -106,7 +75,6 @@ def get_shorter_translations(
     char_budget = int(target_duration_s * 15)
     candidates: list[TranslationCandidate] = []
 
-    # 1. Rule-based: contract common long Spanish phrases
     _CONTRACTIONS = [
         ("en este momento", "ahora"),
         ("en este instante", "ahora"),
@@ -156,7 +124,6 @@ def get_shorter_translations(
             brevity_rationale=f"contracted: {', '.join(applied[:2])}",
         ))
 
-    # 2. Clause truncation: cut at first comma/semicolon/dash
     clause_match = re.search(r"[,;—–]\s*", baseline_es)
     if clause_match:
         truncated = baseline_es[: clause_match.start()].strip().rstrip(".,;")
@@ -167,7 +134,6 @@ def get_shorter_translations(
                 brevity_rationale="truncated at clause boundary",
             ))
 
-    # 3. Argostranslate re-translation on condensed English
     try:
         import argostranslate.translate as _at
         _EN_FILLERS = (
@@ -188,7 +154,6 @@ def get_shorter_translations(
     except Exception as exc:
         logger.debug("argostranslate re-translation skipped: %s", exc)
 
-    # 4. Hard truncation fallback: cut to char budget at word boundary
     if not candidates or all(c.char_count >= len(baseline_es) for c in candidates):
         words = baseline_es.split()
         hard = ""
@@ -204,7 +169,6 @@ def get_shorter_translations(
                 brevity_rationale="truncated to character budget",
             ))
 
-    # Deduplicate and sort by closeness to char_budget
     seen: set[str] = set()
     unique = []
     for c in candidates:

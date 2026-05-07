@@ -19,7 +19,11 @@ def _yt_dlp_opts(**extra):
         "extractor_args": {"youtube": {"player_client": ["ios"]}},
     }
     if pathlib.Path(_COOKIES_FILE).exists():
-        opts["cookiefile"] = _COOKIES_FILE
+        # Copy to a temp file so yt-dlp can write back without touching the mounted source
+        tmp = pathlib.Path("/tmp/yt_cookies.txt")
+        import shutil as _shutil
+        _shutil.copy2(_COOKIES_FILE, tmp)
+        opts["cookiefile"] = str(tmp)
     opts.update(extra)
     return opts
 

@@ -18,7 +18,10 @@ _download_service = DownloadService(ui_dir=settings.data_dir)
 @router.post("/download", response_model=DownloadResponse)
 async def download_endpoint(body: DownloadRequest):
     """Download video and captions, returning video_id and caption segments."""
-    video_id, title = _download_service.get_video_info(body.url)
+    try:
+        video_id, title = _download_service.get_video_info(body.url)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
 
     # Use title from registry; fall back to yt-dlp title with colons stripped
     entry = get_video(video_id)

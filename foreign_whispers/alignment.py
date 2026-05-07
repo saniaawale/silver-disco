@@ -19,26 +19,43 @@ import unicodedata
 from enum import Enum
 
 
+_DIPHTHONGS = re.compile(r"[iu][aeo]|[aeo][iu]|[iu][iu]")
+
+
 def _count_syllables(text: str) -> int:
     """Count syllables in target-language text via vowel-cluster counting.
 
     Designed for Romance languages (Spanish, French, Italian, Portuguese).
-    Strips accents then counts contiguous vowel runs. Each run = one syllable.
+    Strips accents, removes silent inter-vowel 'h', then counts vowel clusters
+    while collapsing Spanish diphthongs (two-vowel pairs spoken as one syllable).
     Returns at least 1 for any non-empty text so the rate never divides by zero.
     """
-    # Normalise: decompose accented chars, keep only ASCII letters + spaces
     nfkd = unicodedata.normalize("NFKD", text.lower())
     ascii_text = "".join(c for c in nfkd if not unicodedata.combining(c))
+    ascii_text = re.sub(r"(?<=[aeiou])h(?=[aeiou])", "", ascii_text)
     clusters = re.findall(r"[aeiou]+", ascii_text)
-    return max(1, len(clusters))
+    syllables = 0
+    for cluster in clusters:
+        remaining = cluster
+        while remaining:
+            if len(remaining) >= 2 and _DIPHTHONGS.match(remaining[:2]):
+                syllables += 1
+                remaining = remaining[2:]
+            else:
+                syllables += 1
+                remaining = remaining[1:]
+    return max(1, syllables)
 
 
 _SYLLABLE_RATE = 4.5  # syllables per second for Romance languages
 
+_PAUSE_S = {".": 0.20, "!": 0.20, "?": 0.20, ";": 0.15,
+            ":": 0.12, ",": 0.08, "—": 0.10, "–": 0.08}
+
 
 def _estimate_duration(text: str) -> float:
-    """Estimate TTS duration in seconds using a syllable-rate heuristic."""
-    return _count_syllables(text) / _SYLLABLE_RATE
+    """Estimate TTS duration in seconds using syllable rate + punctuation pauses."""
+    return _count_syllables(text) / _SYLLABLE_RATE + sum(_PAUSE_S.get(ch, 0.0) for ch in text)
 
 
 @dataclasses.dataclass

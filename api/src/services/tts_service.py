@@ -40,6 +40,6 @@ class TTSService:
         Returns list[AlignedSegment].  Combines compute_segment_metrics and
         global_align into a single facade call for use by the align router.
         """
-        from foreign_whispers.alignment import compute_segment_metrics, global_align
+        from foreign_whispers.alignment import compute_segment_metrics, global_align_dp
         metrics = compute_segment_metrics(en_transcript, es_transcript)
-        return global_align(metrics, silence_regions, max_stretch)
+        return global_align_dp(metrics, silence_regions, max_stretch)

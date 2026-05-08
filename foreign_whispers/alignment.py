@@ -154,7 +154,11 @@ class AlignedSegment:
     stretch_factor:  float = 1.0
 
 
-def decide_action(m: SegmentMetrics, available_gap_s: float = 0.0) -> AlignAction:
+def decide_action(
+    m: SegmentMetrics,
+    available_gap_s: float = 0.0,
+    tolerance_s: float = 0.0,
+) -> AlignAction:
     """Choose the alignment action for a single segment.
 
     Maps the predicted stretch factor to one of five actions using fixed
@@ -175,10 +179,16 @@ def decide_action(m: SegmentMetrics, available_gap_s: float = 0.0) -> AlignActio
         m: Timing metrics for one segment.
         available_gap_s: Silence duration (seconds) after this segment,
             from VAD.  Defaults to 0.0 (no gap available).
+        tolerance_s: Overflow (seconds) that is acceptable without any
+            fix.  Set to 0.3 for off-screen narration (Federico et al.
+            2020) where the listener tolerates ≤300 ms of slip.
+            Defaults to 0.0 (no tolerance, on-screen).
 
     Returns:
         The ``AlignAction`` to apply.
     """
+    if m.overflow_s <= tolerance_s:
+        return AlignAction.ACCEPT
     sf = m.predicted_stretch
     if sf <= 1.1:
         return AlignAction.ACCEPT
@@ -234,6 +244,7 @@ def global_align(
     metrics:         list[SegmentMetrics],
     silence_regions: list[dict],
     max_stretch:     float = 1.4,
+    off_screen:      bool  = True,
 ) -> list[AlignedSegment]:
     """Greedy left-to-right global alignment of dubbed segments.
 
@@ -274,10 +285,15 @@ def global_align(
         silence_regions: VAD output — list of ``{"start_s", "end_s", "label"}``
             dicts.  Pass ``[]`` if VAD is unavailable (gap_shift disabled).
         max_stretch: Upper bound for ``MILD_STRETCH`` speed factor.
+        off_screen: When True (default), applies a 300 ms overflow
+            tolerance per Federico et al. 2020 — suitable for 60 Minutes
+            interview content where the speaker is rarely on-screen.
 
     Returns:
         One ``AlignedSegment`` per input metric, in order.
     """
+    tolerance_s = 0.3 if off_screen else 0.0
+
     def _silence_after(end_s: float) -> float:
         for r in silence_regions:
             if r.get("label") == "silence" and r["start_s"] >= end_s - 0.1:
@@ -287,7 +303,7 @@ def global_align(
     aligned, cumulative_drift = [], 0.0
 
     for m in metrics:
-        action    = decide_action(m, available_gap_s=_silence_after(m.source_end))
+        action    = decide_action(m, available_gap_s=_silence_after(m.source_end), tolerance_s=tolerance_s)
         gap_shift = 0.0
         stretch   = 1.0
 
@@ -321,6 +337,7 @@ def global_align_dp(
     metrics:         list[SegmentMetrics],
     silence_regions: list[dict],
     max_stretch:     float = 1.4,
+    off_screen:      bool  = True,
 ) -> list[AlignedSegment]:
     """Two-pass alignment that reserves large gaps for the segments that need them most.
 
@@ -341,10 +358,16 @@ def global_align_dp(
         metrics: Per-segment timing metrics from ``compute_segment_metrics``.
         silence_regions: VAD silence regions ``[{start_s, end_s, label}]``.
         max_stretch: Upper bound for ``MILD_STRETCH`` speed factor.
+        off_screen: When True (default), applies a 300 ms overflow
+            tolerance per Federico et al. 2020.  Segments within 300 ms
+            of their window are accepted without any fix, which eliminates
+            unnecessary gap-shifting for near-miss off-screen narration.
 
     Returns:
         One ``AlignedSegment`` per input metric, in order.
     """
+    tolerance_s = 0.3 if off_screen else 0.0
+
     def _gaps_after(end_s: float) -> list[dict]:
         return [
             r for r in silence_regions
@@ -359,7 +382,9 @@ def global_align_dp(
     gap_shift_map: dict[int, float] = {}
     candidates = [
         m for m in metrics
-        if 1.4 < m.predicted_stretch <= 1.8 and _gap_size(m.source_end) >= m.overflow_s
+        if m.overflow_s > tolerance_s
+        and 1.4 < m.predicted_stretch <= 1.8
+        and _gap_size(m.source_end) >= m.overflow_s
     ]
     candidates.sort(key=lambda m: -m.overflow_s)
 
@@ -382,7 +407,7 @@ def global_align_dp(
             gap_shift = gap_shift_map[m.index]
             stretch = 1.0
         else:
-            action = decide_action(m, available_gap_s=_gap_size(m.source_end))
+            action = decide_action(m, available_gap_s=_gap_size(m.source_end), tolerance_s=tolerance_s)
             gap_shift = 0.0
             stretch = 1.0
             if action == AlignAction.MILD_STRETCH:
